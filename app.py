@@ -1,11 +1,12 @@
 # app.py
 # Suitability Analysis Dashboard
-# Google Drive raster version
 #
 # Behavior:
-# - Rasters are downloaded from Google Drive folder if not already present locally.
+# - Rasters are downloaded from Google Drive if local raster folder is empty.
 # - All Punjab selected: raster displays exactly as exported, no clipping.
 # - District selected: raster is clipped to the selected district.
+# - Map legend is NOT shown on top of map.
+# - Legend is shown only in the right-side "Result and Legend" panel.
 # - Crop suitability is active; Wheat is selected under Crop.
 # - Soil and Fertilizer modules are shown separately as disabled future modules.
 
@@ -76,7 +77,7 @@ def download_rasters_from_google_drive(folder_url: str, output_dir: str):
 
     try:
         import gdown
-    except Exception as e:
+    except Exception:
         return False, (
             "gdown is not installed. Add gdown to requirements.txt and run: "
             "pip install -r requirements.txt"
@@ -218,6 +219,22 @@ st.markdown(
         color:#264335;
     }
 
+    .gradient-legend {
+        width:100%;
+        height:14px;
+        border-radius:8px;
+        border:1px solid rgba(0,0,0,0.12);
+        margin-top:8px;
+    }
+
+    .gradient-labels {
+        display:flex;
+        justify-content:space-between;
+        font-size:12px;
+        color:#264335;
+        margin-top:6px;
+    }
+
     .leaflet-container {
         border-radius: 16px !important;
         border: 1px solid #36d27d !important;
@@ -341,6 +358,18 @@ SUITABILITY_CLASSES = [
     {"class": "Highly Suitable", "range": ">= 0.65", "color": "#1a9641"},
 ]
 
+LANDCOVER_CLASSES = [
+    ("Water", "#419bdf"),
+    ("Trees", "#397d49"),
+    ("Grass", "#88b053"),
+    ("Flooded vegetation", "#7a87c6"),
+    ("Crops", "#e49635"),
+    ("Shrub and scrub", "#dfc35a"),
+    ("Built area", "#c4281b"),
+    ("Bare ground", "#a59b8f"),
+    ("Snow/Ice", "#b39fe1"),
+]
+
 SCIENCE_WEIGHTS = pd.DataFrame({
     "Factor": [
         "Temperature",
@@ -434,7 +463,6 @@ def read_boundary(boundary_path: str):
         gdf["district_name"] = gdf[name_col].astype(str).str.strip()
 
     gdf = gdf[~gdf.geometry.is_empty & gdf.geometry.notnull()].copy()
-
     gdf["geometry"] = gdf.geometry.simplify(0.001, preserve_topology=True)
 
     return gdf
@@ -598,27 +626,6 @@ def rgba_to_data_url(rgba: np.ndarray):
     return f"data:image/png;base64,{encoded}"
 
 
-def make_colormap(key: str, vmin: float, vmax: float):
-    cfg = LAYER_CONFIG.get(key, LAYER_CONFIG["suitability"])
-    palette = cfg["palette"]
-
-    if key == "landcover":
-        return StepColormap(
-            colors=palette,
-            vmin=0,
-            vmax=8,
-            index=list(range(0, 10)),
-            caption=cfg["label"]
-        )
-
-    return LinearColormap(
-        colors=palette,
-        vmin=vmin,
-        vmax=vmax,
-        caption=cfg["label"]
-    )
-
-
 def classify_suitability(arr: np.ndarray):
     out = np.full(arr.shape, np.nan, dtype="float32")
     valid = np.isfinite(arr)
@@ -629,6 +636,53 @@ def classify_suitability(arr: np.ndarray):
     out[(arr >= 0.65) & valid] = 4
 
     return out
+
+
+def render_right_side_legend(layer_key, layer_label, vmin, vmax):
+    cfg = LAYER_CONFIG.get(layer_key, LAYER_CONFIG["suitability"])
+    palette = cfg["palette"]
+
+    if layer_key == "suitability":
+        st.markdown("##### Suitability classes")
+        for c in SUITABILITY_CLASSES:
+            st.markdown(
+                f"""
+                <div class="legend-row">
+                    <div class="legend-color" style="background:{c['color']};"></div>
+                    <div class="legend-text"><b>{c['class']}</b> - {c['range']}</div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+    elif layer_key == "landcover":
+        st.markdown("##### Landcover classes")
+        for name, color in LANDCOVER_CLASSES:
+            st.markdown(
+                f"""
+                <div class="legend-row">
+                    <div class="legend-color" style="background:{color};"></div>
+                    <div class="legend-text">{name}</div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+    else:
+        st.markdown(f"##### {layer_label}")
+
+        gradient = f"linear-gradient(to right, {', '.join(palette)})"
+
+        st.markdown(
+            f"""
+            <div class="gradient-legend" style="background:{gradient};"></div>
+            <div class="gradient-labels">
+                <span>{vmin:.2f}</span>
+                <span>{vmax:.2f}</span>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
 
 
 @st.cache_data(show_spinner=False)
@@ -810,16 +864,8 @@ def build_map(
             rgba[msk, 2] = rgb[2]
             rgba[msk, 3] = int(255 * opacity)
 
-        legend = StepColormap(
-            colors=["#d7191c", "#fdae61", "#ffffbf", "#1a9641"],
-            vmin=1,
-            vmax=4,
-            index=[1, 2, 3, 4, 5],
-            caption="Suitability Class"
-        )
     else:
         rgba = build_rgba(arr, layer_key, vmin, vmax, opacity=opacity)
-        legend = make_colormap(layer_key, vmin, vmax)
 
     data_url = rgba_to_data_url(rgba)
 
@@ -860,7 +906,9 @@ def build_map(
             }
         ).add_to(m)
 
-    legend.add_to(m)
+    # Important:
+    # No legend is added to the Folium map.
+    # Legend is shown only in right-side Result and Legend panel.
 
     MeasureControl(position="bottomleft").add_to(m)
     Fullscreen(position="topright").add_to(m)
@@ -887,8 +935,7 @@ st.markdown(
     <div class="hero-card">
         <div class="hero-title">Suitability Analysis</div>
         <div class="hero-subtitle">
-            Interactive suitability dashboard using local GeoTIFF rasters, agro-climatic indicators,
-            soil factors, landcover, district boundaries, and weighted suitability science.
+            Interactive suitability dashboard using agro-climatic indicators and weighted suitability science.
         </div>
     </div>
     """,
@@ -1213,18 +1260,7 @@ with right_col:
         unsafe_allow_html=True
     )
 
-    if selected_key == "suitability":
-        st.markdown("##### Suitability classes")
-        for c in SUITABILITY_CLASSES:
-            st.markdown(
-                f"""
-                <div class="legend-row">
-                    <div class="legend-color" style="background:{c['color']};"></div>
-                    <div class="legend-text"><b>{c['class']}</b> - {c['range']}</div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
+    render_right_side_legend(selected_key, selected_label, vmin, vmax)
 
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1323,19 +1359,16 @@ with st.expander("Raster Inventory", expanded=False):
 
     st.code(
         """
-data/
-  rasters/
-    Punjab_Suitability_2022_2023.tif
-    Punjab_Elevation.tif
-    Punjab_Landcover_2022_2023.tif
-    Punjab_pH_2022_2023.tif
-    Punjab_Rainfall_2022_2023.tif
-    Punjab_SOC_2022_2023.tif
-    Punjab_Temperature_2022_2023.tif
-    Punjab_WaterOccurrence.tif
+GitHub project folder:
+  app.py
+  requirements.txt
 
-  boundaries/
-    Punjab_Districts.geojson
+  data/
+    boundaries/
+      Punjab_Districts.geojson
+
+Google Drive:
+  Heavy raster .tif files stored in linked Drive folder.
         """,
         language="text"
     )
