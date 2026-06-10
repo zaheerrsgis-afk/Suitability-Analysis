@@ -3,6 +3,8 @@
 #
 # Behavior:
 # - Rasters are downloaded from Google Drive if local raster folder is empty.
+# - Default district: Bahawalnagar
+# - Default layer: Wheat Suitability Index
 # - All Punjab selected: raster displays exactly as exported, no clipping.
 # - District selected: raster is clipped to the selected district.
 # - Map legend is NOT shown on top of map.
@@ -29,7 +31,6 @@ from rasterio.warp import transform_bounds, transform_geom
 from rasterio.enums import Resampling
 
 import geopandas as gpd
-from branca.colormap import LinearColormap, StepColormap
 from PIL import Image
 
 
@@ -47,6 +48,10 @@ DEFAULT_RASTER_DIR = "data/rasters"
 DEFAULT_BOUNDARY_DIR = "data/boundaries"
 
 GOOGLE_DRIVE_RASTER_FOLDER_URL = "https://drive.google.com/drive/folders/1RRm2jzG4LOvCC9WkLqTLB7tEonca8fA4?usp=sharing"
+
+# Default dashboard opening state
+DEFAULT_DISTRICT = "Bahawalnagar"
+DEFAULT_LAYER = "Wheat Suitability Index"
 
 # Lower value = faster loading.
 # Increase to 650 or 800 if sharper rendering is required.
@@ -72,7 +77,6 @@ def download_rasters_from_google_drive(folder_url: str, output_dir: str):
     The Google Drive folder must be shared as:
     Anyone with the link can view.
     """
-
     Path(output_dir).mkdir(parents=True, exist_ok=True)
 
     try:
@@ -863,7 +867,6 @@ def build_map(
             rgba[msk, 1] = rgb[1]
             rgba[msk, 2] = rgb[2]
             rgba[msk, 3] = int(255 * opacity)
-
     else:
         rgba = build_rgba(arr, layer_key, vmin, vmax, opacity=opacity)
 
@@ -935,7 +938,8 @@ st.markdown(
     <div class="hero-card">
         <div class="hero-title">Suitability Analysis</div>
         <div class="hero-subtitle">
-            Interactive suitability dashboard using agro-climatic indicators and weighted suitability science.
+            Interactive suitability dashboard using local GeoTIFF rasters, agro-climatic indicators,
+            soil factors, landcover, district boundaries, and weighted suitability science.
         </div>
     </div>
     """,
@@ -1063,6 +1067,7 @@ with left_col:
         <div class="panel-card">
             <div class="panel-title">Area of Interest</div>
             <div class="small-muted">
+                Default view opens Bahawalnagar with Wheat Suitability Index.
                 All Punjab shows the original raster. Selecting a district clips the selected raster to that district.
             </div>
         </div>
@@ -1072,7 +1077,18 @@ with left_col:
 
     if boundary_gdf is not None:
         district_names = ["All Punjab"] + sorted(boundary_gdf["district_name"].dropna().unique().tolist())
-        selected_district = st.selectbox("District filter", district_names, index=0)
+
+        default_district_index = 0
+        for i, dname in enumerate(district_names):
+            if dname.strip().lower() == DEFAULT_DISTRICT.lower():
+                default_district_index = i
+                break
+
+        selected_district = st.selectbox(
+            "District filter",
+            district_names,
+            index=default_district_index
+        )
     else:
         selected_district = "All Punjab"
         st.warning("No district boundary found. Add GeoJSON or complete shapefile in data/boundaries.")
@@ -1141,7 +1157,18 @@ with left_col:
 
     available_labels = sorted(available_labels, key=order_score)
 
-    selected_layer_option = st.selectbox("Select layer", available_labels)
+    default_layer_index = 0
+    for i, layer_name in enumerate(available_labels):
+        if DEFAULT_LAYER.lower() in layer_name.lower():
+            default_layer_index = i
+            break
+
+    selected_layer_option = st.selectbox(
+        "Select layer",
+        available_labels,
+        index=default_layer_index
+    )
+
     selected_info = raster_options[selected_layer_option]
 
     selected_path = selected_info["path"]
